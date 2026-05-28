@@ -269,13 +269,16 @@ fn render_dry_run_modal(frame: &mut Frame, app: &App) {
     let mut content = String::new();
     content.push_str(" Verified Pipeline Processing Changes Staging Log Manifest:\n\n");
 
+    // Account for top border, title, bottom prompt, and bottom border (~6 lines overhead)
+    let max_visible_logs = popup.height.saturating_sub(6) as usize;
+
     for (i, change) in app
         .pending_changes
         .iter()
         .skip(app.show_dry_run_scroll)
         .enumerate()
     {
-        if i > 16 {
+        if i >= max_visible_logs {
             content.push_str(" ... truncated logs overflow parameters ...\n");
             break;
         }
@@ -353,7 +356,6 @@ fn render_input_modal(frame: &mut Frame, app: &App) {
     let area = centered_rect(55, 3, frame.size());
     frame.render_widget(Clear, area);
 
-    // Converted to Strings so we can dynamically format the Rename state
     let title = match app.input_purpose {
         InputPurpose::Filter => " Filter Files (Regex) ".to_string(),
         InputPurpose::RenamePrefix => format!(
@@ -369,7 +371,7 @@ fn render_input_modal(frame: &mut Frame, app: &App) {
 
     let paragraph = Paragraph::new(input_text).block(
         Block::default()
-            .title(title) // ratatui natively accepts Strings for titles
+            .title(title)
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::Cyan)),
     );

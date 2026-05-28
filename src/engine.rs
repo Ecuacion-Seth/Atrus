@@ -70,7 +70,9 @@ pub fn generate_sort_changes(current_dir: &Path, config: &AppConfig) -> Result<V
                     .cloned()
                     .unwrap_or_else(|| "Others".to_string());
 
-                let target_dir = config.sort_targets.get(&category)
+                let target_dir = config
+                    .sort_targets
+                    .get(&category)
                     .or_else(|| config.sort_targets.get("Others"));
 
                 if let Some(target_dir) = target_dir {
@@ -233,15 +235,23 @@ fn to_camel_case(s: &str) -> String {
         .collect()
 }
 
-pub fn apply_changes(changes: &[PendingChange]) -> Result<Vec<UndoLog>> {
+pub fn apply_changes(changes: &[PendingChange]) -> anyhow::Result<(Vec<UndoLog>, Vec<String>)> {
     let mut undo_logs = Vec::new();
+    let mut errors = Vec::new(); // Collect non-fatal errors
 
     for change in changes {
         match change.kind {
             ChangeKind::Move => {
                 if let Some(parent) = change.dst.parent() {
                     if !parent.exists() {
-                        let _ = fs::create_dir_all(parent);
+                        if let Err(e) = fs::create_dir_all(parent) {
+                            errors.push(format!(
+                                "Could not create directory '{}': {}",
+                                parent.display(),
+                                e
+                            ));
+                            continue;
+                        }
                     }
                 }
 
@@ -249,6 +259,7 @@ pub fn apply_changes(changes: &[PendingChange]) -> Result<Vec<UndoLog>> {
                     if fs::copy(&change.src, &change.dst).is_ok() {
                         let _ = fs::remove_file(&change.src);
                     } else {
+                        errors.push(format!("Failed to move: {}", change.src.display()));
                         continue;
                     }
                 }
@@ -260,13 +271,20 @@ pub fn apply_changes(changes: &[PendingChange]) -> Result<Vec<UndoLog>> {
             }
             ChangeKind::DeleteDir => {
                 if change.src.exists() {
-                    let _ = fs::remove_dir(&change.src);
+                    if let Err(e) = fs::remove_dir(&change.src) {
+                        // Log the error but don't crash the loop
+                        errors.push(format!(
+                            "Could not remove '{}': {}",
+                            change.src.display(),
+                            e
+                        ));
+                    }
                 }
             }
         }
     }
 
-    Ok(undo_logs)
+    Ok((undo_logs, errors))
 }
 
 pub fn undo_operations(logs: &[UndoLog]) -> Result<()> {
@@ -278,11 +296,27 @@ pub fn undo_operations(logs: &[UndoLog]) -> Result<()> {
     Ok(())
 }
 
-pub fn filter_files(files: &[FileItem], query: &str) -> Result<Vec<FileItem>> {
-    let regex = Regex::new(query)?;
-    Ok(files
-        .iter()
-        .filter(|f| regex.is_match(&f.name))
-        .cloned()
-        .collect())
+pub fn filter_files(files: &[FileItem], query: &str) -> anyhow::Result<(Vec<FileItem>, bool)> {
+    match Regex::new(query) {
+        Ok(regex) => Ok((
+            files
+                .iter()
+                .filter(|f| regex.is_match(&f.name))
+                .cloned()
+                .collect(),
+            false, // No fallback used
+        )),
+        Err(_) => {
+            // Fallback to case-insensitive plain text search on invalid regex
+            let lower_query = query.to_lowercase();
+            Ok((
+                files
+                    .iter()
+                    .filter(|f| f.name.to_lowercase().contains(&lower_query))
+                    .cloned()
+                    .collect(),
+                true, // Fallback triggered
+            ))
+        }
+    }
 }

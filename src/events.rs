@@ -18,9 +18,8 @@ fn handle_key_event(app: &mut App, key: KeyEvent) -> bool {
         return false;
     }
 
-    // 2. Hardware debouncer: Increased from 12ms to 150ms
-    // This prevents accidental double-triggers but keeps intent-driven navigation snappy.
-    if app.last_key_time.elapsed() < std::time::Duration::from_millis(150) {
+    // 2. Hardware debouncer: Reduced from 150ms to 16ms
+    if app.last_key_time.elapsed() < std::time::Duration::from_millis(16) {
         return false;
     }
     app.last_key_time = std::time::Instant::now();
@@ -102,7 +101,6 @@ fn handle_filter_input_keys(app: &mut App, key: KeyEvent) -> bool {
             app.mode = AppMode::Explorer;
         }
         KeyCode::Tab => {
-            // Allow cycling through rename cases while typing the prefix
             if app.input_purpose == InputPurpose::RenamePrefix {
                 app.rename_case = match app.rename_case {
                     RenameCase::Lowercase => RenameCase::Uppercase,
@@ -115,11 +113,16 @@ fn handle_filter_input_keys(app: &mut App, key: KeyEvent) -> bool {
             InputPurpose::Filter => {
                 app.search_query = app.input_buffer.clone();
                 let _ = app.refresh_files();
+
+                // Safely evaluate typed state
+                if app.regex_valid && !app.search_query.is_empty() {
+                    app.message = format!("Applied regex filter: '{}'", app.search_query);
+                }
+
                 app.mode = AppMode::Explorer;
             }
             InputPurpose::RenamePrefix => {
                 app.rename_prefix = app.input_buffer.clone();
-                // REMOVED the hardcoded lowercase override here!
                 let _ = app.execute_rename();
             }
             InputPurpose::SettingsPath => {

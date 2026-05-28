@@ -8,7 +8,7 @@ pub struct App {
     pub files: Vec<FileItem>,
     pub filtered_files: Vec<FileItem>,
     pub selected_index: usize,
-    pub scroll_offset: usize, // FIX: Track the top-most visible item index
+    pub scroll_offset: usize,
     pub mode: AppMode,
     pub undo_stack: Vec<Vec<UndoLog>>,
     pub config: AppConfig,
@@ -27,6 +27,7 @@ pub struct App {
     pub settings_selected: usize,
     pub show_dry_run_scroll: usize,
     pub last_key_time: std::time::Instant,
+    pub regex_valid: bool, // NEW: Safely tracks the fallback state
 }
 
 impl App {
@@ -38,7 +39,7 @@ impl App {
             files: Vec::new(),
             filtered_files: Vec::new(),
             selected_index: 0,
-            scroll_offset: 0, // Initialize to top
+            scroll_offset: 0,
             mode: AppMode::Explorer,
             undo_stack: Vec::new(),
             config,
@@ -57,11 +58,11 @@ impl App {
             settings_selected: 0,
             show_dry_run_scroll: 0,
             last_key_time: std::time::Instant::now(),
+            regex_valid: true, // Default to true
         };
         app.refresh_files()?;
         Ok(app)
     }
-
     pub fn refresh_files(&mut self) -> anyhow::Result<()> {
         self.files = engine::read_directory(&self.current_dir)?;
         self.apply_filter()?;
@@ -76,9 +77,17 @@ impl App {
     pub fn apply_filter(&mut self) -> anyhow::Result<()> {
         if self.search_query.is_empty() {
             self.filtered_files = self.files.clone();
+            self.regex_valid = true;
         } else {
-            self.filtered_files = engine::filter_files(&self.files, &self.search_query)?;
+            let (filtered, used_fallback) = engine::filter_files(&self.files, &self.search_query)?;
+            self.filtered_files = filtered;
+            self.regex_valid = !used_fallback;
+
+            if !self.regex_valid {
+                self.message = "(Plain text match — invalid regex)".to_string();
+            }
         }
+
         if self.selected_index >= self.filtered_files.len() {
             self.selected_index = self.filtered_files.len().saturating_sub(1);
         }
@@ -150,6 +159,7 @@ impl App {
             // Re-highlight the folder we just exited
             if let Some(pos) = self.filtered_files.iter().position(|f| f.path == old_dir) {
                 self.selected_index = pos;
+                self.scroll_offset = pos.saturating_sub(5); // Bring safely into view
             } else {
                 self.selected_index = 0;
                 self.scroll_offset = 0;
@@ -236,14 +246,30 @@ impl App {
     }
 
     pub fn confirm_pending_changes(&mut self) -> anyhow::Result<()> {
-        let logs = engine::apply_changes(&self.pending_changes)?;
+        let (logs, errors) = engine::apply_changes(&self.pending_changes)?;
+
         if !logs.is_empty() {
             self.undo_stack.push(logs);
         }
-        self.message = "Successfully processed changes.".to_string();
+
+        // Clear staging and reset mode
         self.pending_changes.clear();
         self.mode = AppMode::Explorer;
+
+        // Refresh disk state FIRST
         self.refresh_files()?;
+
+        // Assert the actual operation result LAST so it wins the render cycle
+        if errors.is_empty() {
+            self.message = "Successfully processed all changes.".to_string();
+        } else {
+            self.message = format!(
+                "Processed changes, but {} error(s) (e.g., {}).",
+                errors.len(),
+                errors.first().unwrap_or(&"unknown".to_string())
+            );
+        }
+
         Ok(())
     }
 
@@ -256,8 +282,12 @@ impl App {
     pub fn undo_last(&mut self) -> anyhow::Result<()> {
         if let Some(logs) = self.undo_stack.pop() {
             engine::undo_operations(&logs)?;
-            self.message = "Last operation successfully reversed.".to_string();
+
+            // Refresh disk state FIRST
             self.refresh_files()?;
+
+            // Set message LAST so it overwrites the "Idle" default
+            self.message = "Last operation successfully reversed.".to_string();
         } else {
             self.message = "Undo structural stack is empty!".to_string();
         }
