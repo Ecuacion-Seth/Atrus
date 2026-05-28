@@ -7,13 +7,13 @@ A terminal-based file manager written in Rust, built with [Ratatui](https://gith
 ## Features
 
 - **Directory browsing** with scrollable file list and live metadata panel
-- **Regex file filtering** — search files by name using regular expressions
+- **Regex file filtering** — search files by name using regular expressions, with automatic fallback to plain text matching on invalid regex
 - **Auto-sort** — move files into categorized subdirectories based on extension (Images, Documents, Code, etc.)
 - **Batch rename** — apply a prefix and transform filenames to lowercase, uppercase, or camelCase
-- **Cleanup** — detect and delete empty directories and broken symlinks
+- **Cleanup** — detect and delete empty directories
 - **Duplicate finder** — SHA-256 hash scan to identify duplicate files across the directory tree
 - **Large file scanner** — surface the top 20 heaviest files recursively
-- **Dry-run preview** — every bulk operation shows a full change manifest before committing
+- **Dry-run preview** — every bulk operation shows a full scrollable change manifest before committing
 - **Undo** — a per-session undo stack lets you reverse the last applied operation
 - **Configurable categories** — edit sort targets, file extensions, and category names through an in-app settings screen; config persists to `~/.atrus-config.json`
 
@@ -24,8 +24,8 @@ A terminal-based file manager written in Rust, built with [Ratatui](https://gith
 **Prerequisites:** Rust toolchain (1.70+). Install via [rustup](https://rustup.rs).
 
 ```bash
-git clone https://github.com/yourname/atrus.git
-cd atrus
+git clone https://github.com/Ecuacion-Seth/Atrus.git
+cd Atrus
 cargo build --release
 ./target/release/atrus
 ```
@@ -36,18 +36,20 @@ The binary can be copied anywhere on your `$PATH`:
 cp target/release/atrus ~/.local/bin/
 ```
 
-### Dependencies (`Cargo.toml`)
+---
 
-| Crate | Purpose |
-|---|---|
-| `ratatui` | TUI rendering |
-| `crossterm` | Terminal backend / input |
-| `anyhow` | Error handling |
-| `serde` / `serde_json` | Config serialization |
-| `chrono` | File modification timestamps |
-| `walkdir` | Recursive directory traversal |
-| `sha2` | SHA-256 hashing for duplicate detection |
-| `regex` | File name filtering |
+## Dependencies
+
+| Crate | Version | Purpose |
+|---|---|---|
+| `ratatui` | 0.24 | TUI rendering |
+| `crossterm` | 0.27 | Terminal backend / input |
+| `anyhow` | 1.0 | Error handling |
+| `serde` / `serde_json` | 1.0 | Config serialization |
+| `chrono` | 0.4 | File modification timestamps |
+| `walkdir` | 2.4 | Recursive directory traversal |
+| `sha2` | 0.10 | SHA-256 hashing for duplicate detection |
+| `regex` | 1.10 | File name filtering |
 
 ---
 
@@ -60,19 +62,17 @@ On first run, Atrus writes a default config to `~/.atrus-config.json` (Linux/mac
   "extension_map": {
     "jpg": "Images",
     "rs": "Code",
-    "pdf": "Documents",
-    ...
+    "pdf": "Documents"
   },
   "sort_targets": {
     "Images":    "Images",
     "Documents": "Documents",
-    "Code":      "Code",
-    ...
+    "Code":      "Code"
   }
 }
 ```
 
-Sort targets are relative paths by default, resolved against the current working directory when a sort operation runs. You can set them to absolute paths for a fixed destination (e.g. `~/Organized/Images`).
+Sort targets are relative paths by default, resolved against the current working directory when a sort operation runs. You can set them to absolute paths for a fixed destination (e.g. `/home/user/Organized/Images`).
 
 All config fields are editable from within the app via the Settings screen — no manual JSON editing required.
 
@@ -147,17 +147,14 @@ models.rs     Shared data types (FileItem, AppMode, PendingChange, etc.)
 config.rs     AppConfig with serde load/save and default extension map
 ```
 
-The design keeps filesystem side-effects isolated in `engine.rs`. The `App` struct in `app.rs` owns all mutable state; `events.rs` calls methods on it, and `ui.rs` reads from it immutably (except for `adjust_viewport`, which requires `&mut` for scroll correction).
+Filesystem side-effects are isolated in `engine.rs`. The `App` struct in `app.rs` owns all mutable state; `events.rs` calls methods on it, and `ui.rs` reads from it immutably (except for `adjust_viewport`, which requires `&mut` for scroll correction).
 
 ---
 
 ## Known Issues / Roadmap
 
-- **Regex filter crashes on invalid input** — typing a malformed regex (e.g. `[`) propagates an error. A future fix should fall back to plain substring matching and display an inline error in the status bar.
-- **`scroll_offset` not synced after parent navigation** — when navigating up to a parent directory and the previously-visited folder is selected, the scroll window isn't repositioned until the next render cycle. This is cosmetically noticeable on long directory listings.
-- **Dry-run modal row cap is hardcoded** — the 16-row overflow cutoff in the change preview is independent of the actual terminal height.
-- **`frame.size()` deprecation** — `ratatui` 0.26+ prefers `frame.area()`; update when upgrading the crate.
 - Mouse support is enabled at the terminal level but no mouse event handling is implemented yet.
+- The `scroll_offset` heuristic on parent navigation (`saturating_sub(5)`) is corrected on the next render frame by `adjust_viewport`; visible only as a brief flicker on very long directory listings.
 
 ---
 
